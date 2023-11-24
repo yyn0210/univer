@@ -22,6 +22,7 @@ import {
 } from '@univerjs/base-sheets';
 import {
     Disposable,
+    DisposableCollection,
     ICommandInfo,
     ICommandService,
     IStyleSheet,
@@ -34,6 +35,8 @@ import {
     toDisposable,
 } from '@univerjs/core';
 import { Inject } from '@wendellhu/redi';
+import { Observable } from 'rxjs';
+import { filter, switchMap } from 'rxjs/operators';
 
 import { ScrollCommand } from '../commands/commands/set-scroll.command';
 import { SetZoomRatioOperation } from '../commands/operations/set-zoom-ratio.operation';
@@ -959,64 +962,98 @@ export class FreezeController extends Disposable {
 
     private _commandExecutedListener() {
         const updateCommandList = [SetFrozenMutation.id, SetZoomRatioOperation.id];
-
+        const commandExecuted$ = new Observable<ICommandInfo>((subscribe) => {
+            const allCommandList = [...updateCommandList, DeltaRowHeightCommand.id, DeltaColumnWidthCommand.id];
+            const subscription = this._commandService.onCommandExecuted((command: ICommandInfo) => {
+                if (allCommandList.includes(command.id)) {
+                    subscribe.next(command);
+                }
+            });
+            return () => subscription.dispose();
+        });
         this.disposeWithMe(
-            this._commandService.onCommandExecuted((command: ICommandInfo) => {
-                if (updateCommandList.includes(command.id)) {
-                    const workbook = this._currentUniverService.getCurrentUniverSheetInstance();
-                    const worksheet = workbook.getActiveSheet();
+            toDisposable(
+                commandExecuted$.subscribe((command) => {
+                    if (updateCommandList.includes(command.id)) {
+                        const workbook = this._currentUniverService.getCurrentUniverSheetInstance();
+                        const worksheet = workbook.getActiveSheet();
 
-                    const params = command.params as ISetFrozenMutationParams;
-                    const { workbookId, worksheetId } = params;
-                    if (!(workbookId === workbook.getUnitId() && worksheetId === worksheet.getSheetId())) {
-                        return;
+                        const params = command.params as ISetFrozenMutationParams;
+                        const { workbookId, worksheetId } = params;
+                        if (!(workbookId === workbook.getUnitId() && worksheetId === worksheet.getSheetId())) {
+                            return;
+                        }
+
+                        const freeze = worksheet.getConfig().freeze;
+
+                        if (freeze == null) {
+                            return;
+                        }
+
+                        const {
+                            startRow = -1,
+                            startColumn = -1,
+                            ySplit = 0,
+                            xSplit = 0,
+                        } = worksheet.getConfig().freeze;
+
+                        this._refreshFreeze(startRow, startColumn, ySplit, xSplit);
+                    } else if (command.id === DeltaRowHeightCommand.id) {
+                        const freeze = this._getFreeze();
+                        if (
+                            command.params &&
+                            freeze &&
+                            (command.params as IDeltaRowHeightCommand).anchorRow < freeze.startRow
+                        ) {
+                            this._refreshCurrent();
+                        }
+                    } else if (command.id === DeltaColumnWidthCommand.id) {
+                        const freeze = this._getFreeze();
+                        if (
+                            command.params &&
+                            freeze &&
+                            (command.params as IDeltaColumnWidthCommandParams).anchorCol < freeze.startColumn
+                        ) {
+                            this._refreshCurrent();
+                        }
                     }
-
-                    const freeze = worksheet.getConfig().freeze;
-
-                    if (freeze == null) {
-                        return;
-                    }
-
-                    const { startRow = -1, startColumn = -1, ySplit = 0, xSplit = 0 } = worksheet.getConfig().freeze;
-
-                    this._refreshFreeze(startRow, startColumn, ySplit, xSplit);
-                } else if (command.id === DeltaRowHeightCommand.id) {
-                    const freeze = this._getFreeze();
-                    if (
-                        command.params &&
-                        freeze &&
-                        (command.params as IDeltaRowHeightCommand).anchorRow < freeze.startRow
-                    ) {
-                        this._refreshCurrent();
-                    }
-                } else if (command.id === DeltaColumnWidthCommand.id) {
-                    const freeze = this._getFreeze();
-                    if (
-                        command.params &&
-                        freeze &&
-                        (command.params as IDeltaColumnWidthCommandParams).anchorCol < freeze.startColumn
-                    ) {
-                        this._refreshCurrent();
-                    }
-                } else if (command.id === SetWorksheetRowAutoHeightMutation.id) {
-                    const params = command.params as ISetWorksheetRowAutoHeightMutationParams;
-                    const freeze = this._getFreeze();
-
-                    if (
-                        freeze &&
-                        freeze.startRow > -1 &&
-                        params.rowsAutoHeightInfo.some((info) => info.row < freeze.startRow)
-                    ) {
+                })
+            )
+        );
+        this.disposeWithMe(
+            toDisposable(
+                commandExecuted$
+                    .pipe(
+                        filter((commandInfo) => commandInfo.id === SetWorksheetRowAutoHeightMutation.id),
+                        filter((commandInfo) => {
+                            const params = commandInfo.params as ISetWorksheetRowAutoHeightMutationParams;
+                            const freeze = this._getFreeze();
+                            if (
+                                freeze &&
+                                freeze.startRow > -1 &&
+                                params.rowsAutoHeightInfo.some((info) => info.row < freeze.startRow)
+                            ) {
+                                return true;
+                            }
+                            return false;
+                        }),
+                        switchMap(
+                            () =>
+                                new Observable<DisposableCollection>((subscribe) => {
+                                    const disposableCollection = new DisposableCollection();
+                                    subscribe.next(disposableCollection);
+                                    return () => disposableCollection.dispose();
+                                })
+                        )
+                    )
+                    .subscribe((disposableCollection) => {
                         const subscription = this._sheetSkeletonManagerService.currentSkeleton$.subscribe(() => {
                             this._refreshCurrent();
-                            setTimeout(() => {
-                                subscription.unsubscribe();
-                            });
+                            subscription.unsubscribe();
                         });
-                    }
-                }
-            })
+                        disposableCollection.add(toDisposable(subscription));
+                    })
+            )
         );
     }
 
