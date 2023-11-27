@@ -1,6 +1,7 @@
 import { SelectionManagerService } from '@univerjs/base-sheets';
 import {
     Disposable,
+    INTERCEPTOR_POINT,
     IRange,
     IUniverInstanceService,
     LifecycleStages,
@@ -23,7 +24,6 @@ import {
 import { APPLY_TYPE, IAutoFillRule } from './type';
 
 export interface IAutoFillService {
-    getRules(): IAutoFillRule[];
     getApplyType(): APPLY_TYPE;
     isFillingStyle(): boolean;
     setApplyType(type: APPLY_TYPE): void;
@@ -33,6 +33,7 @@ export interface IAutoFillService {
     applyType$: Observable<APPLY_TYPE>;
     menu$: Observable<IApplyMenuItem[]>;
     setDisableApplyType: (type: APPLY_TYPE, disable: boolean) => void;
+    getRules: () => IAutoFillRule[];
 }
 
 export interface IApplyMenuItem {
@@ -43,7 +44,6 @@ export interface IApplyMenuItem {
 
 @OnLifecycle(LifecycleStages.Rendered, AutoFillService)
 export class AutoFillService extends Disposable implements IAutoFillService {
-    private _rules: IAutoFillRule[] = [];
     private readonly _applyType$: BehaviorSubject<APPLY_TYPE> = new BehaviorSubject<APPLY_TYPE>(APPLY_TYPE.SERIES);
     private _isFillingStyle: boolean = true;
     private _sourceRange: IRange | null = null;
@@ -84,7 +84,8 @@ export class AutoFillService extends Disposable implements IAutoFillService {
     }
 
     private _init() {
-        this._rules = [
+        this._isFillingStyle = true;
+        [
             formulaRule,
             numberRule,
             extendNumberRule,
@@ -93,23 +94,21 @@ export class AutoFillService extends Disposable implements IAutoFillService {
             chnWeek3Rule,
             loopSeriesRule,
             otherRule,
-        ].sort((a, b) => b.priority - a.priority);
-        this._isFillingStyle = true;
-    }
-
-    registryRule(rule: IAutoFillRule) {
-        // if rule.type is used, console error
-        if (this._rules.find((r) => r.type === rule.type)) {
-            throw new Error(`Registry rule failed, type '${rule.type}' already exist!`);
-            return;
-        }
-        // insert rules according to the rule.priority, the higher priority will be inserted at the beginning of the array
-        const index = this._rules.findIndex((r) => r.priority < rule.priority);
-        this._rules.splice(index === -1 ? this._rules.length : index, 0, rule);
+        ].forEach((rule) => {
+            this._sheetInterceptorService.intercept(INTERCEPTOR_POINT.AUTO_FILL, {
+                priority: rule.priority,
+                handler: (_fnList = [], _location, next) => {
+                    // 这里需要把内容转换一下
+                    _fnList?.push(rule);
+                    return next(_fnList);
+                },
+            });
+        });
     }
 
     getRules() {
-        return this._rules;
+        return (this._sheetInterceptorService.fetchThroughInterceptors(INTERCEPTOR_POINT.AUTO_FILL)([], null) ||
+            []) as IAutoFillRule[];
     }
 
     getApplyType() {

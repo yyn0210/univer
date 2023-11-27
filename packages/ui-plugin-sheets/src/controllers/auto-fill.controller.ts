@@ -11,6 +11,7 @@ import {
     LifecycleStages,
     Nullable,
     OnLifecycle,
+    SheetInterceptorService,
     toDisposable,
     Tools,
 } from '@univerjs/core';
@@ -43,7 +44,8 @@ export class AutoFillController extends Disposable {
         @ISelectionRenderService private readonly _selectionRenderService: ISelectionRenderService,
         @ICommandService private readonly _commandService: ICommandService,
         @IAutoFillService private readonly _autoFillService: IAutoFillService,
-        @Inject(SelectionManagerService) private readonly _selectionManagerService: SelectionManagerService
+        @Inject(SelectionManagerService) private readonly _selectionManagerService: SelectionManagerService,
+        @Inject(SheetInterceptorService) private _sheetInterceptorService: SheetInterceptorService
     ) {
         super();
         this._init();
@@ -245,7 +247,6 @@ export class AutoFillController extends Disposable {
         const num = Math.floor(asLen / csLen);
         const rsd = asLen % csLen;
         const rules = this._autoFillService.getRules();
-
         if (!hasStyle && applyType === APPLY_TYPE.ONLY_FORMAT) {
             console.error('ERROR: only format can not be applied when hasStyle is false');
             return [];
