@@ -94,7 +94,7 @@ export abstract class BaseObject {
 
     private _strokeWidth: number = 0;
 
-    private _parent: any; // Todo: The object must be mounted to a scene or group. 'Any' is used here to avoid circular dependencies. This will be resolved later through dependency injection.
+    private _parent: any; // TODO: @DR-Univer. The object must be mounted to a scene or group. 'Any' is used here to avoid circular dependencies. This will be resolved later through dependency injection.
 
     private _zIndex: number = 0;
 
@@ -111,6 +111,8 @@ export abstract class BaseObject {
     private _isTransformer = false;
 
     private _forceRender = false;
+
+    private _layer: any; // TODO: @DR-Univer. Belong to layer
 
     constructor(key?: string) {
         if (key) {
@@ -235,6 +237,10 @@ export abstract class BaseObject {
         return this._cursor;
     }
 
+    get layer() {
+        return this._layer;
+    }
+
     set transform(trans: Transform) {
         this._transform = trans;
     }
@@ -261,6 +267,10 @@ export abstract class BaseObject {
 
     set cursor(val: CURSOR_TYPE) {
         this.setCursor(val);
+    }
+
+    set layer(layer: any) {
+        this._layer = layer;
     }
 
     protected set top(num: number | string) {
@@ -319,16 +329,20 @@ export abstract class BaseObject {
         this._dirty = state;
 
         if (state) {
-            const scene = this.getScene();
-            if (scene == null) {
-                this._dirty = false;
+            // const scene = this.getScene();
+            // if (scene == null) {
+            //     this._dirty = false;
 
+            //     return;
+            // }
+            if (this._layer == null) {
+                this._dirty = false;
                 return;
             }
-            window.clearTimeout(scene.debounceParentTimeout);
+            window.clearTimeout(this._layer.debounceParentTimeout);
             // To prevent multiple refreshes caused by setting values for multiple object instances at once.
-            scene.debounceParentTimeout = window.setTimeout(() => {
-                this._parent?.makeDirty(state);
+            this._layer.debounceParentTimeout = window.setTimeout(() => {
+                this._layer?.makeDirty(state);
             }, 0);
             // this.parent?.makeDirty(state);
         }
@@ -339,7 +353,7 @@ export abstract class BaseObject {
     makeDirtyNoDebounce(state: boolean = true) {
         this._dirty = state;
         if (state) {
-            this.parent?.makeDirty(state);
+            this._layer?.makeDirty(state);
         }
 
         return this;

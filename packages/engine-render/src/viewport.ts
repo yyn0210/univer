@@ -1,6 +1,7 @@
 import type { EventState, IPosition, Nullable } from '@univerjs/core';
 import { Observable } from '@univerjs/core';
 
+import type { BaseObject } from './base-object';
 import { RENDER_CLASS_TYPE } from './basics/const';
 import type { IWheelEvent } from './basics/i-events';
 import { PointerInput } from './basics/i-events';
@@ -8,7 +9,6 @@ import { toPx } from './basics/tools';
 import { Transform } from './basics/transform';
 import type { IBoundRect } from './basics/vector2';
 import { Vector2 } from './basics/vector2';
-import { Canvas } from './canvas';
 import type { BaseScrollBar } from './shape/base-scroll-bar';
 import type { ThinScene } from './thin-scene';
 
@@ -108,15 +108,11 @@ export class Viewport {
 
     private _scene!: ThinScene;
 
-    private _cacheCanvas: Nullable<Canvas>;
-
     private _scrollBar?: Nullable<BaseScrollBar>;
 
     private _isWheelPreventDefaultX: boolean = false;
 
     private _isWheelPreventDefaultY: boolean = false;
-
-    private _allowCache: boolean = false;
 
     private _scrollStopNum: number = 0;
 
@@ -160,10 +156,6 @@ export class Viewport {
         // }
 
         this._setWithAndHeight(props);
-
-        if (this._allowCache) {
-            this._cacheCanvas = new Canvas();
-        }
 
         this._isWheelPreventDefaultX = props?.isWheelPreventDefaultX || false;
         this._isWheelPreventDefaultY = props?.isWheelPreventDefaultY || false;
@@ -469,25 +461,20 @@ export class Viewport {
         return this;
     }
 
-    getScrollBarTransForm(isMouseFix: boolean = false) {
+    getScrollBarTransForm() {
         const composeResult = Transform.create();
 
-        if (isMouseFix || !this._allowCache) {
-            composeResult.multiply(Transform.create([1, 0, 0, 1, this._left, this._top]));
-        }
+        composeResult.multiply(Transform.create([1, 0, 0, 1, this._left, this._top]));
+
         return composeResult;
     }
 
-    render(parentCtx?: CanvasRenderingContext2D) {
+    render(parentCtx?: CanvasRenderingContext2D, objects: BaseObject[] = []) {
         if (this.isActive === false) {
             return;
         }
         const mainCtx = parentCtx || this._scene.getEngine()?.getCanvas().getContext();
         // console.log(this.viewPortKey, this._cacheCanvas);
-        if (!this.isDirty() && this._allowCache) {
-            this._applyCache(mainCtx);
-            return;
-        }
         const sceneTrans = this._scene.transform.clone();
 
         // if (this._viewPortKey === 'viewMainTop') {
@@ -496,22 +483,9 @@ export class Viewport {
 
         sceneTrans.multiply(Transform.create([1, 0, 0, 1, -this.actualScrollX || 0, -this.actualScrollY || 0]));
 
-        let ctx = mainCtx;
+        const ctx = mainCtx;
         if (!ctx) {
             return;
-        }
-
-        const applyCanvasState = this._getApplyCanvasState();
-
-        if (applyCanvasState) {
-            sceneTrans.multiply(
-                Transform.create([1, 0, 0, 1, -this.left / this._scene.scaleX, -this.top / this._scene.scaleY])
-            );
-            if (this._cacheCanvas == null) {
-                throw new Error('cache canvas is null');
-            }
-            ctx = this._cacheCanvas.getContext();
-            this._cacheCanvas.clear();
         }
 
         const m = sceneTrans.getMatrix();
@@ -519,7 +493,7 @@ export class Viewport {
 
         ctx.save();
 
-        if (!applyCanvasState && this._renderClipState) {
+        if (this._renderClipState) {
             ctx.beginPath();
             // DEPT: left is set by upper views but width and height is not
             const { scaleX, scaleY } = this._getBoundScale(m[0], m[3]);
@@ -528,7 +502,10 @@ export class Viewport {
         }
 
         ctx.transform(m[0], m[1], m[2], m[3], m[4], m[5]);
-        this._scene.renderObjects(ctx, this._calViewportRelativeBounding());
+        // this._scene.renderObjects(ctx, this._calViewportRelativeBounding());
+        objects.forEach((o) => {
+            o.render(ctx, this._calViewportRelativeBounding());
+        });
         ctx.restore();
 
         if (this._scrollBar) {
@@ -537,8 +514,6 @@ export class Viewport {
             this.drawScrollbar(ctx);
             ctx.restore();
         }
-
-        if (applyCanvasState) this._applyCache(mainCtx);
 
         this.makeDirty(false);
         this._scrollRendered();
@@ -653,6 +628,8 @@ export class Viewport {
             // TODO
             // ...
         }
+
+        this._scene.makeDirty(true);
     }
 
     // 自己是否被选中
@@ -681,7 +658,7 @@ export class Viewport {
             return;
         }
 
-        const scrollBarTrans = this.getScrollBarTransForm(true);
+        const scrollBarTrans = this.getScrollBarTransForm();
         const svCoord = scrollBarTrans.invert().applyPoint(coord);
         return this._scrollBar.pick(svCoord);
     }
@@ -700,7 +677,6 @@ export class Viewport {
         this.onScrollBeforeObserver.clear();
         this.onScrollStopObserver.clear();
         this._scrollBar?.dispose();
-        this._cacheCanvas?.dispose();
 
         this._scene.removeViewport(this._viewPortKey);
     }
@@ -812,10 +788,6 @@ export class Viewport {
             width,
             height,
         };
-    }
-
-    private _getApplyCanvasState() {
-        return this._allowCache && this._renderClipState;
     }
 
     private _scrollRendered() {
@@ -980,27 +952,6 @@ export class Viewport {
         } else if (parent.classType === RENDER_CLASS_TYPE.ENGINE) {
             this._scrollBar.render(ctx);
         }
-    }
-
-    private _applyCache(ctx?: CanvasRenderingContext2D) {
-        if (!ctx || this._cacheCanvas == null) {
-            return;
-        }
-        const pixelRatio = this._cacheCanvas.getPixelRatio();
-        const width = this._cacheCanvas.getWidth() * pixelRatio;
-        const height = this._cacheCanvas.getHeight() * pixelRatio;
-        // console.log(this.viewPortKey, this._cacheCanvas, width, height, this.left, this.top, this.width, this.height, pixelRatio);
-        ctx.drawImage(
-            this._cacheCanvas.getCanvasEle(),
-            0,
-            0,
-            width,
-            height,
-            this.left,
-            this.top,
-            this.width || 0,
-            this.height || 0
-        );
     }
 
     private _setWithAndHeight(props?: IViewProps) {
